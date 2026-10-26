@@ -1,0 +1,50 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Shortener</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/app.js" defer></script>
+</head>
+<body>
+<main class="container">
+    <section class="card">
+        <h1>URL Shortener</h1>
+        <p class="subtitle">Make your long links short and easy to share.</p>
+
+        <form id="urlForm">
+            <label for="originalUrl">Original URL</label>
+            <input
+                    type="url"
+                    id="originalUrl"
+                    placeholder="https://example.com/my-long-url"
+                    required
+            >
+
+            <label for="customAlias">Custom alias (optional)</label>
+            <input
+                    type="text"
+                    id="customAlias"
+                    placeholder="my-link"
+                    minlength="3"
+                    maxlength="30"
+                    pattern="[a-zA-Z0-9_-]{3,30}"
+            >
+            <small>Use 3–30 letters, numbers, hyphens, or underscores.</small>
+
+            <button type="submit" id="shortenButton">Shorten URL</button>
+        </form>
+
+        <p id="message" role="status" aria-live="polite"></p>
+
+        <section id="result" hidden>
+            <h2>Your short URL</h2>
+            <a id="shortUrl" href="#" target="_blank" rel="noopener noreferrer"></a>
+            <button type="button" id="copyButton">Copy link</button>
+        </section>
+    </section>
+</main>
+</body>
+</html>
