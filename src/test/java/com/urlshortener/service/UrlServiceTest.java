@@ -14,14 +14,18 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +33,12 @@ class UrlServiceTest {
 
     @Mock
     private UrlRepository urlRepository;
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
 
     @InjectMocks
     private UrlService urlService;
@@ -40,6 +50,9 @@ class UrlServiceTest {
                 "baseUrl",
                 "http://localhost:8080"
         );
+
+        lenient().when(redisTemplate.opsForValue())
+                .thenReturn(valueOperations);
     }
 
     @Test
@@ -47,7 +60,7 @@ class UrlServiceTest {
         CreateUrlRequest request = new CreateUrlRequest();
         request.setOriginalUrl("https://www.example.com");
 
-        when(urlRepository.existsByShortCode(any(String.class)))
+        when(urlRepository.existsByShortCode(anyString()))
                 .thenReturn(false);
 
         when(urlRepository.save(any(ShortUrl.class)))
@@ -67,7 +80,7 @@ class UrlServiceTest {
                 )
         );
 
-        verify(urlRepository, times(1)).save(any(ShortUrl.class));
+        verify(urlRepository).save(any(ShortUrl.class));
     }
 
     @Test
@@ -107,10 +120,7 @@ class UrlServiceTest {
                 () -> urlService.createShortUrl(request)
         );
 
-        assertEquals(
-                HttpStatus.CONFLICT,
-                exception.getStatusCode()
-        );
+        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
 
         verify(urlRepository, never()).save(any(ShortUrl.class));
     }
@@ -140,19 +150,43 @@ class UrlServiceTest {
         shortUrl.setOriginalUrl("https://www.example.com");
         shortUrl.setExpiresAt(null);
 
+        when(valueOperations.get("urlshortener:original:abc12345"))
+                .thenReturn(null);
+
         when(urlRepository.findByShortCode("abc12345"))
                 .thenReturn(Optional.of(shortUrl));
 
         String originalUrl = urlService.getOriginalUrl("abc12345");
 
-        assertEquals(
+        assertEquals("https://www.example.com", originalUrl);
+
+        verify(urlRepository).findByShortCode("abc12345");
+        verify(valueOperations).set(
+                "urlshortener:original:abc12345",
                 "https://www.example.com",
-                originalUrl
+                Duration.ofHours(24)
         );
     }
 
     @Test
+    void getOriginalUrlShouldReturnCachedUrlWithoutQueryingDatabase() {
+        when(valueOperations.get("urlshortener:original:abc12345"))
+                .thenReturn("https://www.cached-example.com");
+
+        String originalUrl = urlService.getOriginalUrl("abc12345");
+
+        assertEquals("https://www.cached-example.com", originalUrl);
+
+        verify(urlRepository, never()).findByShortCode(anyString());
+        verify(valueOperations, never())
+                .set(anyString(), anyString(), any(Duration.class));
+    }
+
+    @Test
     void getOriginalUrlShouldReturnNotFoundForUnknownCode() {
+        when(valueOperations.get("urlshortener:original:unknown"))
+                .thenReturn(null);
+
         when(urlRepository.findByShortCode("unknown"))
                 .thenReturn(Optional.empty());
 
@@ -165,5 +199,29 @@ class UrlServiceTest {
                 HttpStatus.NOT_FOUND,
                 exception.getStatusCode()
         );
+    }
+
+    @Test
+    void getOriginalUrlShouldRejectExpiredUrl() {
+        ShortUrl shortUrl = new ShortUrl();
+        shortUrl.setShortCode("expired123");
+        shortUrl.setOriginalUrl("https://www.example.com");
+        shortUrl.setExpiresAt(LocalDateTime.now().minusMinutes(5));
+
+        when(valueOperations.get("urlshortener:original:expired123"))
+                .thenReturn(null);
+
+        when(urlRepository.findByShortCode("expired123"))
+                .thenReturn(Optional.of(shortUrl));
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> urlService.getOriginalUrl("expired123")
+        );
+
+        assertEquals(HttpStatus.GONE, exception.getStatusCode());
+
+        verify(valueOperations, never())
+                .set(anyString(), anyString(), any(Duration.class));
     }
 }

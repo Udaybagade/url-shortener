@@ -17,11 +17,19 @@ import java.net.URI;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 
+import org.springframework.data.redis.core.StringRedisTemplate;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+
+
 @Service
 @RequiredArgsConstructor
 public class UrlService {
 
     private final UrlRepository urlRepository;
+
+    private final StringRedisTemplate redisTemplate;
 
     @Value("${app.base-url}")
     private String baseUrl;
@@ -84,28 +92,51 @@ public class UrlService {
                 shortUrl.getExpiresAt()
         );
     }
-
     public String getOriginalUrl(String shortCode) {
 
+        String cacheKey = "urlshortener:original:" + shortCode;
+
+        // Step 1: Check Redis
+        String cachedUrl = redisTemplate.opsForValue().get(cacheKey);
+
+        if (cachedUrl != null) {
+            return cachedUrl;
+        }
+
+        // Step 2: Find the URL in MySQL
         ShortUrl shortUrl = urlRepository
                 .findByShortCode(shortCode)
-                .orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
-                                "Short URL not found"
-                        ));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Short URL not found"
+                ));
 
+        // Step 3: Check expiration
+        LocalDateTime now = LocalDateTime.now();
         LocalDateTime expiresAt = shortUrl.getExpiresAt();
 
-        if (expiresAt != null
-                && !expiresAt.isAfter(LocalDateTime.now())) {
-
+        if (expiresAt != null && !expiresAt.isAfter(now)) {
             throw new ResponseStatusException(
                     HttpStatus.GONE,
                     "This short URL has expired"
             );
         }
 
+        // Step 4: Set the Redis cache duration
+        Duration cacheDuration = Duration.ofHours(24);
+
+        if (expiresAt != null) {
+            cacheDuration = Duration.between(now, expiresAt);
+        }
+
+        // Step 5: Cache the original URL
+        redisTemplate.opsForValue().set(
+                cacheKey,
+                shortUrl.getOriginalUrl(),
+                cacheDuration
+        );
+
+        // Step 6: Return the original URL
         return shortUrl.getOriginalUrl();
     }
 
